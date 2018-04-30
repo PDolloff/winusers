@@ -24,12 +24,7 @@ writeDiff => 0,
 cache => 0,
 fields => {
      NAME => {},
-     TYPE => {},
-     SIZE => {},
-     LASTLOGON => {},
-     DESCRIPTION => {},
-     STATUS => {},
-     SID => {}
+     LOGINTIME => {}
 }
  
 };

@@ -1,112 +1,99 @@
-'----------------------------------------------------------
-' Plugin for OCS Inventory NG 2.x
-' Script : Users list
-' Version : 2.20
-' Date : 01/02/2018
-' Authors : J.C. BELLAMY © 2000 and Stéphane PAUTREL (acb78.com)
-' OCS adaptation  :	Guillaume PRIOU
-'----------------------------------------------------------
-' OS checked [X] on	32b	64b	(Professionnal edition)
-'	Windows XP		[X]
-'	Windows Vista	[X]	[X]
-'	Windows 7		[X]	[X]
-'	Windows 8.1		[X]	[X]	
-'	Windows 10		[X]	[X]
-'	Windows 2k8R2		[X]
-'	Windows 2k12R2		[X]
-'	Windows 2k16		[X]
-' ---------------------------------------------------------
-' NOTE : No checked on Windows 8
-' ---------------------------------------------------------
-On Error Resume Next
+Dim wmiDateTime, wmi, query, eventItems, eventItem
+Dim timeWritten, eventDate, eventTime, description
+Dim eventsDict, eventInfo, errorCount, i
 
-Dim Network, objFSO, Computer, objWMIService
-Dim colItems, objItem, colAdmGroup, UserType, UserStatus, objAdm
-Dim accent, noaccent, currentChar, result, k, o
+'----------------------------------------------------------------------------------------------------------------------------
+'Name       : SQ          -> Places single quotes around a string
+'Parameters : stringValue -> String containing the value to place single quotes around
+'Return     : SQ          -> Returns a single quoted string
+'----------------------------------------------------------------------------------------------------------------------------
+Function SQ(ByVal stringValue)
+   If VarType(stringValue) = vbString Then
+      SQ = "'" & stringValue & "'"
+   End If
+End Function
 
-Set objFSO = Wscript.CreateObject("Scripting.FileSystemObject")
-Set Network = Wscript.CreateObject("WScript.Network")
-Computer=Network.ComputerName
+'----------------------------------------------------------------------------------------------------------------------------
+'Name       : DQ          -> Place double quotes around a string and replace double quotes
+'           :             -> within the string with pairs of double quotes.
+'Parameters : stringValue -> String value to be double quoted
+'Return     : DQ          -> Double quoted string.
+'----------------------------------------------------------------------------------------------------------------------------
+Function DQ (ByVal stringValue)
+   If stringValue <> "" Then
+      DQ = """" & Replace (stringValue, """", """""") & """"
+   Else
+      DQ = """"""
+   End If
+End Function
 
-Function StripAccents(str)
-	accent   = "ÈÉÊËÛÙÏÎÀÂÔÖÇèéêëûùïîàâôöç"
-	noaccent = "EEEEUUIIAAOOCeeeeuuiiaaooc"
-	currentChar = ""
-	result = ""
-	k = 0
-	o = 0
-	For k = 1 To len(str)
-		currentChar = mid(str,k, 1)
-		o = InStr(accent, currentChar)
-		If o > 0 Then
-			result = result & mid(noaccent,o,1)
-		Else
-			result = result & currentChar
+Function ConvertWMIDateTime(wmiDateTimeString)
+   Dim integerValues, i
+   '-------------------------------------------------------------------------------------------------------------------------
+   'Ensure the wmiDateTimeString contains a "+" or "-" character. If it doesn't it is not a valid WMI date time so exit.
+   '-------------------------------------------------------------------------------------------------------------------------
+   If InStr(1, wmiDateTimeString, "+", vbTextCompare) = 0 And _
+      InStr(1, wmiDateTimeString, "-", vbTextCompare) = 0 Then
+      ConvertWMIDateTime = ""
+      Exit Function
+   End If
+   '-------------------------------------------------------------------------------------------------------------------------
+   'Replace any "." or "+" or "-" characters in the wmiDateTimeString and check each character is a valid integer.
+   '-------------------------------------------------------------------------------------------------------------------------   
+   integerValues = Replace(Replace(Replace(wmiDateTimeString, ".", ""), "+", ""), "-", "")
+   For i = 1 To Len(integerValues)
+      If Not IsNumeric(Mid(integerValues, i, 1)) Then
+         ConvertWMIDateTime = ""
+         Exit Function
+      End If
+   Next
+   '-------------------------------------------------------------------------------------------------------------------------
+   'Convert the WMI Date Time string to a String that can be formatted as a valid Date Time value.
+   '-------------------------------------------------------------------------------------------------------------------------
+   ConvertWMIDateTime = Left(wmiDateTimeString, 4) & "-" & _ 
+							  Mid(wmiDateTimeString, 5, 2)  & "-" & _
+                              Mid(wmiDateTimeString, 7, 2)  & " " & _
+                              Mid(wmiDateTimeString, 9, 2)  & ":" & _
+                              Mid(wmiDateTimeString, 11, 2) & ":" & _
+                              Mid(wmiDateTimeString, 13, 2)
+End Function
+
+query = "Select * from Win32_NTLogEvent Where Logfile = 'Security' And EventCode = 4624"
+Set wmi = GetObject("winmgmts:{impersonationLevel=impersonate,(Security)}!\\.\root\cimv2")
+If Err.Number <> 0 Then
+ WScript.echo "Creating WMI Object to connect to " & DQ(hostName)
+ 
+End If
+'----------------------------------------------------------------------------------------------------------------------
+'Create the "SWbemDateTime" Object for converting WMI Date formats. Supported in Windows Server 2003 & Windows XP.
+'----------------------------------------------------------------------------------------------------------------------
+Set wmiDateTime = CreateObject("WbemScripting.SWbemDateTime")
+If Err.Number <> 0 Then
+ Wscript.Echo "Creating " & DQ("WbemScripting.SWbemDateTime") & " object"
+ 
+End If
+'----------------------------------------------------------------------------------------------------------------------
+'Build the WQL query and execute it.
+'----------------------------------------------------------------------------------------------------------------------
+startDateTime = DateAdd("d", -7, Now)
+wmiDateTime.SetVarDate startDateTime, True
+query          = query & " And (TimeWritten >= " & SQ(wmiDateTime.Value) & ")"
+
+Set eventItems = wmi.ExecQuery(query)
+If Err.Number <> 0 Then
+ WScript.echo "Executing WMI Query " & DQ(query)
+ 
+End If
+
+
+For Each eventItem In eventItems
+	If eventItem.InsertionStrings(8) = 2 Then
+		If eventItem.InsertionStrings(6) = "PMH" Then
+			timeWritten = ConvertWMIDateTime(eventItem.TimeWritten)
+			wscript.echo "<WINUSERS>"
+			wscript.echo "<NAME>" & LCase(eventItem.InsertionStrings(5)) & "</NAME>"
+			wscript.echo "<LOGINTIME>" & timeWritten & "</LOGINTIME>"
+			wscript.echo "</WINUSERS>"
 		End If
-	Next
-	StripAccents = result
-End Function
-
-Function IfAdmin(str)
-	Set colAdmGroup = GetObject("WinNT://./Administrateurs") ' get members of the local admin group
-	UserType = "Local user"
-	For Each objAdm In colAdmGroup.Members
-		If objAdm.Name = objItem.Name Then
-			UserType = "Local admin"
-		End If
-	Next
-End Function
-
-Function getFolderSize(folderName)	
-    On Error Resume Next
-    size = 0
-    hasSubfolders = False
-    Set folder = objFSO.GetFolder(folderName)
-    Err.Clear
-    size = folder.Size
-
-    If Err.Number <> 0 then   
-        For Each subfolder in folder.SubFolders
-            size = size + getFolderSize(subfolder.Path)
-            hasSubfolders = True
-        Next
-
-        If not hasSubfolders then
-            size = folder.Size
-        End If
-    End If
-
-    getFolderSize = size
-
-    Set folder = Nothing        
-End Function
-
-Set objWMIService = GetObject("winmgmts:root\cimv2")
-
-Set colItems = objWMIService.ExecQuery _
-	("Select * from Win32_UserAccount Where LocalAccount = True")
-
-For Each objItem in colItems
-	IfAdmin(objItem.Name)
-	UserStatus = objItem.Disabled
-	If objItem.Disabled = "False" Or objItem.Disabled = "Faux" Then UserStatus = "Actif"	' or Enabled in your native language
-	If objItem.Disabled = "True" Or objItem.Disabled = "Vrai" Then UserStatus = "Inactif"	' or Disabled in your native language
-	Set objFolder = objFSO.GetFolder("C:\Users\" & objItem.Name & "")
-	
-	dtmLastLogin = "NC"	' Default text (for ex. Never connected)
-	On Error Resume Next
-	Set objUser = GetObject("WinNT://./" & objItem.Name & ",user")
-	dtmLastLogin = objUser.LastLogin
-	
-	Wscript.echo _
-		"<WINUSERS>" & VbCrLf &_
-		"<NAME>" & StripAccents(objItem.Name) & "</NAME>" & VbCrLf &_
-		"<TYPE>" & UserType & "</TYPE>" & VbCrLf &_
-		"<SIZE>" & round(getFolderSize(objFolder)/(1024*1024),0) & "</SIZE>" & VbCrLf &_
-		"<LASTLOGON>" & dtmLastLogin & "</LASTLOGON>" & VbCrLf &_
-		"<DESCRIPTION>" & StripAccents(objItem.Description)  & "</DESCRIPTION>" & VbCrLf &_
-		"<STATUS>" & UserStatus  & "</STATUS>" & VbCrLf &_
-		"<SID>" & objItem.SID  & "</SID>" & VbCrLf &_
-		"</WINUSERS>"
-	Set objFolder = Nothing
+	End If
 Next
